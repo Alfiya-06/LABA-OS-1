@@ -1,0 +1,140 @@
+import java.io.*;
+
+public class SysInfoLinux {
+
+    public static void main(String[] args) {
+        System.out.println("=== System Info (Linux/WSL) ===\n");
+
+        try {
+            // --- OS ---
+            // Получаем дистрибутив Linux через lsb_release
+            String os = runCommand("lsb_release -d");
+            if (os != null) os = os.replace("Description:", "").trim();
+            else os = readFileLine("/etc/os-release", "PRETTY_NAME=");
+            System.out.println("OS: " + os);
+
+            // --- Kernel ---
+            // Версия ядра Linux
+            System.out.println("Kernel: Linux " + runCommand("uname -r"));
+
+            // --- Architecture ---
+            // Архитектура процессора (x86_64, arm, ...)
+            System.out.println("Architecture: " + runCommand("uname -m"));
+
+            // --- Hostname ---
+            // Имя компьютера/узла
+            System.out.println("Hostname: " + runCommand("hostname"));
+
+            // --- User ---
+            // Имя текущего пользователя
+            System.out.println("User: " + System.getProperty("user.name"));
+
+            // --- Memory ---
+            // Считываем информацию о памяти из /proc/meminfo
+            String meminfo = readFile("/proc/meminfo");
+            System.out.printf("RAM: %dMB free / %dMB total%n",
+                    extractValue(meminfo, "MemFree:"), extractValue(meminfo, "MemTotal:"));
+            System.out.printf("Swap: %dMB free / %dMB total%n",
+                    extractValue(meminfo, "SwapFree:"), extractValue(meminfo, "SwapTotal:"));
+            System.out.printf("Virtual memory: %d MB%n", extractValue(meminfo, "VmallocTotal:"));
+
+            // --- Processors ---
+            // Количество логических процессоров
+            System.out.println("Processors: " + runCommand("nproc"));
+
+            // --- Load average ---
+            // Средняя загрузка процессора за 1, 5 и 15 минут
+            String[] loads = runCommand("cat /proc/loadavg").split("\\s+");
+            System.out.printf("Load average: %.2f, %.2f, %.2f%n",
+                    Double.parseDouble(loads[0]),
+                    Double.parseDouble(loads[1]),
+                    Double.parseDouble(loads[2]));
+
+            // --- Disks ---
+            // Вывод информации о подключенных логических дисках
+            System.out.println("\nDrives:");
+            printDisks();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Выводит список дисков с типом файловой системы и объемом свободного и общего пространства
+     */
+    private static void printDisks() throws IOException {
+        // Используем команду df для получения информации о разделах
+        String dfOutput = runCommand("df -h --output=target,fstype,avail,size");
+        if (dfOutput != null) {
+            String[] lines = dfOutput.split("\n");
+            for (int i = 1; i < lines.length; i++) {
+                String[] parts = lines[i].trim().split("\\s+");
+                if (parts.length < 4) continue;
+
+                String mount = parts[0];   // точка монтирования
+                String type = parts[1];    // тип файловой системы
+                String free = parts[2];    // свободное место
+                String total = parts[3];   // общий размер
+
+                // Пропускаем временные и системные файловые системы
+                if (type.equals("tmpfs") || type.equals("overlay") || type.equals("proc") || type.equals("sysfs")) continue;
+
+                System.out.printf("  %-10s %-6s %s free / %s total%n", mount, type, free, total);
+            }
+        }
+    }
+
+    /**
+     * Запускает команду в Linux через bash и возвращает весь вывод как строку
+     */
+    private static String runCommand(String cmd) {
+        try {
+            Process p = new ProcessBuilder("bash", "-c", cmd).start();
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line).append("\n");
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Читает файл и ищет строку, начинающуюся с указанного префикса
+     * Используется для чтения информации о дистрибутиве Linux
+     */
+    private static String readFileLine(String path, String prefix) {
+        try (BufferedReader r = new BufferedReader(new FileReader(path))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.startsWith(prefix)) return line.substring(prefix.length()).replace("\"", "").trim();
+            }
+        } catch (IOException ignored) {}
+        return "Unknown OS";
+    }
+
+    /**
+     * Читает весь файл и возвращает содержимое в виде строки
+     */
+    private static String readFile(String path) throws IOException {
+        BufferedReader r = new BufferedReader(new FileReader(path));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = r.readLine()) != null) sb.append(line).append("\n");
+        r.close();
+        return sb.toString();
+    }
+
+    /**
+     * Извлекает числовое значение из строки
+     */
+    private static long extractValue(String content, String key) {
+        for (String line : content.split("\n")) {
+            if (line.startsWith(key)) return Long.parseLong(line.split("\\s+")[1]) / 1024;
+        }
+        return 0;
+    }
+}
